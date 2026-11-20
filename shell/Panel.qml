@@ -33,7 +33,6 @@ Panel {
   property var shelfData: null
   property string offlineMessage: ""
   property bool busy: false
-  property bool showButtonPercent: false
 
   readonly property var activeBooks: {
     if (!root.shelfData || !root.shelfData.books) return []
@@ -55,7 +54,6 @@ Panel {
 
   readonly property real progress: (root.focusBook && root.focusBook.percent) ? Math.max(0, Math.min(1, root.focusBook.percent / 100)) : 0
   readonly property bool resolved: root.shelfData !== null
-  readonly property string percentText: root.focusBook ? Math.round(root.progress * 100) + "%" : ""
 
   readonly property string tooltip: root.focusBook
     ? strings.t("bar.tooltip").arg(Math.round(root.progress * 100)).arg(root.focusBook.title)
@@ -142,13 +140,6 @@ Panel {
     onTriggered: root.refresh()
   }
 
-  Timer {
-    interval: 3500
-    running: root.focusBook !== null
-    repeat: true
-    onTriggered: root.showButtonPercent = !root.showButtonPercent
-  }
-
   // ---- bar button ---------------------------------------------------------
 
   BarIconButton {
@@ -156,8 +147,6 @@ Panel {
     anchors.fill: parent
     bar: root.bar
     text: "\uf02d"
-    labelText: root.focusBook && root.showButtonPercent ? root.percentText : ""
-    fontSize: Style.font.body
     tooltipText: root.tooltip
     onPressed: function (buttonCode) {
       if (buttonCode === Qt.RightButton) root.close()
