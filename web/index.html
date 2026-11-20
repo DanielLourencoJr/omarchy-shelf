@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <title>Shelf — Reading Manager</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231a1b26'/%3E%3Cpath d='M8 9h7v14H8zM17 9h7v14h-7z' fill='%237aa2f7'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <div class="brand">
+          <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v18H6.5A2.5 2.5 0 0 1 4 18.5v-13Z" />
+            <path d="M20 5.5A2.5 2.5 0 0 0 17.5 3H13v18h4.5a2.5 2.5 0 0 0 2.5-2.5v-13Z" />
+          </svg>
+          <div>
+            <h1>Shelf</h1>
+            <p id="brandSub">one book at a time</p>
+          </div>
+        </div>
+
+        <div class="topbar-right">
+          <div class="goal-widget" id="goalWidget" title="Pages read today">
+            <svg viewBox="0 0 44 44" class="goal-ring" aria-hidden="true">
+              <circle class="ring-track" cx="22" cy="22" r="18" />
+              <circle class="ring-fill" id="goalRing" cx="22" cy="22" r="18" />
+            </svg>
+            <div class="goal-text">
+              <strong id="goalPages">0</strong>
+              <span id="goalTarget">/ 20 pages</span>
+            </div>
+          </div>
+          <div class="streak-pill" id="streakPill" title="Consecutive reading days">
+            <span class="flame" aria-hidden="true">🔥</span>
+            <strong id="streakDays">0</strong><span>day streak</span>
+          </div>
+          <button class="btn ghost icon-only" id="settingsBtn" aria-label="Settings" title="Settings">⚙</button>
+          <button class="btn primary" id="addBookBtn">+ Add book</button>
+        </div>
+      </header>
+
+      <section class="focus-banner" id="focusBanner" hidden>
+        <div class="focus-copy">
+          <span class="eyebrow">Keep going</span>
+          <p id="focusLine"></p>
+        </div>
+        <div class="focus-figures" id="focusFigures"></div>
+      </section>
+
+      <main>
+        <section class="section">
+          <div class="section-head">
+            <h2>Reading now</h2>
+            <span class="section-meta" id="activeMeta"></span>
+          </div>
+          <div class="book-grid" id="activeBooks"></div>
+        </section>
+
+        <section class="section" id="pausedSection" hidden>
+          <div class="section-head">
+            <h2>Paused</h2>
+            <span class="section-meta">pick one back up when you are ready</span>
+          </div>
+          <div class="book-grid compact" id="pausedBooks"></div>
+        </section>
+
+        <section class="section" id="finishedSection" hidden>
+          <div class="section-head">
+            <h2>Finished</h2>
+            <span class="section-meta" id="finishedMeta"></span>
+          </div>
+          <div class="book-grid compact" id="finishedBooks"></div>
+        </section>
+
+        <section class="section activity">
+          <div class="section-head">
+            <h2>Reading history</h2>
+            <span class="section-meta" id="historyMeta"></span>
+          </div>
+          <div class="heatmap-wrap">
+            <div class="heatmap" id="heatmap" aria-label="Pages read per day"></div>
+            <div class="heatmap-legend">
+              <span>less</span>
+              <i class="cell l0"></i><i class="cell l1"></i><i class="cell l2"></i><i class="cell l3"></i><i class="cell l4"></i>
+              <span>more</span>
+            </div>
+          </div>
+          <div class="stats-row" id="statsRow"></div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <span id="dataNote">Local data · SQLite</span>
+        <span>Press <kbd>n</kbd> for a new book · <kbd>l</kbd> to log pages</span>
+      </footer>
+    </div>
+
+    <!-- Add book -->
+    <dialog id="addDialog" class="dialog wide">
+      <form id="addForm" method="dialog" novalidate>
+        <header class="dialog-head">
+          <div>
+            <h2>Add a book</h2>
+            <p>Point to a PDF and Shelf reads its page count and cover.</p>
+          </div>
+          <button class="btn ghost icon-only" type="button" data-close aria-label="Close">✕</button>
+        </header>
+
+        <div class="shelf-warning" id="shelfWarning" hidden></div>
+
+        <div class="tabs" role="tablist">
+          <button type="button" class="tab active" data-tab="path" role="tab">From path</button>
+          <button type="button" class="tab" data-tab="upload" role="tab">Upload PDF</button>
+        </div>
+
+        <div class="tab-panel" data-panel="path">
+          <label class="field path-field">
+            <span>PDF path</span>
+            <div class="input-row">
+              <input id="pathInput" type="text" placeholder="~/Books/some-book.pdf" autocomplete="off" spellcheck="false" />
+              <button type="button" class="btn ghost" id="browseBtn" title="Choose a file using the standard file picker">Browse…</button>
+            </div>
+            <div id="pathSuggestions" class="suggestions-list" hidden></div>
+          </label>
+          <div class="detected" id="detected" hidden>
+            <div class="detected-cover" id="detectedCover"></div>
+            <div>
+              <strong id="detectedTitle"></strong>
+              <span id="detectedMeta"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="tab-panel" data-panel="upload" hidden>
+          <label class="dropzone" id="dropzone">
+            <input type="file" id="fileInput" accept="application/pdf,.pdf" hidden />
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0 4 4m-4-4L8 8M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" /></svg>
+            <strong id="dropTitle">Drop a PDF here</strong>
+            <span id="dropSub">or click to choose a file — it is copied into your local shelf library</span>
+          </label>
+        </div>
+
+        <div class="form-grid">
+          <label class="field">
+            <span>Title</span>
+            <input id="titleInput" type="text" placeholder="Detected from the PDF" />
+          </label>
+          <label class="field">
+            <span>Author</span>
+            <input id="authorInput" type="text" placeholder="Optional" />
+          </label>
+          <label class="field">
+            <span>Total pages</span>
+            <input id="totalInput" type="number" min="1" step="1" placeholder="Automatic" />
+          </label>
+          <label class="field">
+            <span>Pages read before shelf</span>
+            <input id="startPageInput" type="number" min="0" step="1" placeholder="0 (not counted as today)" />
+            <small class="field-help">Pages read previously. Won't count towards today's goal.</small>
+          </label>
+          <label class="field span-two">
+            <span>Pages read today</span>
+            <input id="readTodayInput" type="number" min="0" step="1" placeholder="0 (counts to today's goal)" />
+            <small class="field-help">Pages read today. These count towards today's goal and streak.</small>
+          </label>
+        </div>
+
+        <p class="dialog-error" id="addError" hidden></p>
+
+        <footer class="dialog-foot">
+          <p class="hint" id="addHint">One book at a time is the whole trick.</p>
+          <div class="dialog-actions">
+            <button type="button" class="btn ghost" data-close>Cancel</button>
+            <button type="submit" class="btn primary" id="addSubmit">Add to shelf</button>
+          </div>
+        </footer>
+      </form>
+    </dialog>
+
+    <!-- Log pages -->
+    <dialog id="logDialog" class="dialog narrow">
+      <form id="logForm" method="dialog" novalidate>
+        <header class="dialog-head">
+          <div>
+            <h2 id="logTitle">Log pages</h2>
+            <p id="logSub">How far did you get?</p>
+          </div>
+          <button class="btn ghost icon-only" type="button" data-close aria-label="Close">✕</button>
+        </header>
+        <div class="quick-row" id="logQuick"></div>
+        <label class="field">
+          <span>Pages read</span>
+          <input id="logPages" type="number" step="1" inputmode="numeric" placeholder="0" required />
+        </label>
+        <div class="form-grid two">
+          <label class="field">
+            <span>Day</span>
+            <input id="logDate" type="date" />
+          </label>
+          <label class="field">
+            <span>Note</span>
+            <input id="logNote" type="text" placeholder="Optional" />
+          </label>
+        </div>
+        <p class="dialog-error" id="logError" hidden></p>
+        <footer class="dialog-foot">
+          <p class="hint" id="logHint"></p>
+          <div class="dialog-actions">
+            <button type="button" class="btn ghost" data-close>Cancel</button>
+            <button type="submit" class="btn primary">Log pages</button>
+          </div>
+        </footer>
+      </form>
+    </dialog>
+
+    <!-- Book actions -->
+    <dialog id="bookDialog" class="dialog narrow">
+      <header class="dialog-head">
+        <div>
+          <h2 id="bookDialogTitle">Book</h2>
+          <p id="bookDialogSub"></p>
+        </div>
+        <button class="btn ghost icon-only" type="button" data-close aria-label="Close">✕</button>
+      </header>
+      <div class="action-list" id="bookActions"></div>
+      <div class="edit-panel" id="editPanel" hidden>
+        <label class="field"><span>Title</span><input id="editTitle" type="text" /></label>
+        <label class="field"><span>Author</span><input id="editAuthor" type="text" /></label>
+        <div class="form-grid two">
+          <label class="field"><span>Total pages</span><input id="editTotal" type="number" min="1" /></label>
+          <label class="field">
+            <span>Pages read before shelf</span>
+            <input id="editStartPage" type="number" min="0" />
+            <small class="field-help">Baseline pages read before shelf.</small>
+          </label>
+        </div>
+        <div class="dialog-actions">
+          <button class="btn ghost" type="button" id="editCancel">Cancel</button>
+          <button class="btn primary" type="button" id="editSave">Save changes</button>
+        </div>
+      </div>
+      <p class="dialog-error" id="bookError" hidden></p>
+    </dialog>
+
+    <!-- Settings -->
+    <dialog id="settingsDialog" class="dialog narrow">
+      <form id="settingsForm" method="dialog" novalidate>
+        <header class="dialog-head">
+          <div>
+            <h2>Settings</h2>
+            <p>Small numbers that keep the habit honest.</p>
+          </div>
+          <button class="btn ghost icon-only" type="button" data-close aria-label="Close">✕</button>
+        </header>
+        <label class="field">
+          <span>Daily page goal</span>
+          <input id="goalInput" type="number" min="1" step="1" />
+        </label>
+        <label class="field">
+          <span>Books in progress before a nudge</span>
+          <input id="shelfInput" type="number" min="1" step="1" />
+        </label>
+        <p class="hint">Shelf is a local app. Your books, pages and notes live in a SQLite file on this machine.</p>
+        <footer class="dialog-foot">
+          <span></span>
+          <div class="dialog-actions">
+            <button type="button" class="btn ghost" data-close>Cancel</button>
+            <button type="submit" class="btn primary">Save</button>
+          </div>
+        </footer>
+      </form>
+    </dialog>
+
+    <div class="toasts" id="toasts" aria-live="polite"></div>
+    <script src="/app.js"></script>
+  </body>
+</html>

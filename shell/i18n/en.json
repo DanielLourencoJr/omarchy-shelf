@@ -1,0 +1,14 @@
+{
+  "bar.tooltip": "Shelf — %1% through %2",
+  "bar.tooltipEmpty": "Shelf — no book in progress",
+  "panel.title": "Shelf",
+  "panel.today": "%1 / %2 pages",
+  "panel.streak": "%1-day streak",
+  "panel.start": "Start server",
+  "panel.open": "Open shelf",
+  "panel.add": "Add book",
+  "panel.empty": "Nothing in progress. Add a PDF in the shelf window.",
+  "panel.offline": "The shelf server is not running.",
+  "panel.left": "%1 left",
+  "panel.logged": "Logged %1 pages"
+}

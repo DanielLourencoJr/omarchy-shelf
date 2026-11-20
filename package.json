@@ -1,0 +1,19 @@
+{
+  "name": "readingmanager",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A small shelf for the books you are reading, with daily page logging and an Omarchy bar widget.",
+  "type": "commonjs",
+  "bin": {
+    "reading": "./bin/reading"
+  },
+  "scripts": {
+    "start": "node server/server.js",
+    "test": "node test/smoke.js",
+    "install:desktop": "./install.sh"
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "license": "MIT"
+}

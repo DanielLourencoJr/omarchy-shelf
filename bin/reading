@@ -1,0 +1,299 @@
+#!/usr/bin/env node
+'use strict';
+
+/**
+ * `reading` — the terminal face of Shelf.
+ *
+ * The web app and the Omarchy bar widget both read from the same local server.
+ * This CLI starts that server on demand, then talks to its JSON API.
+ */
+
+const fs = require('node:fs');
+const path = require('node:path');
+const { spawn } = require('node:child_process');
+const config = require('../server/paths');
+
+const args = process.argv.slice(2);
+const command = (args.shift() || 'open').toLowerCase();
+
+function flag(name, fallback = null) {
+  const index = args.indexOf(`--${name}`);
+  if (index === -1) {
+    const short = args.indexOf(`-${name[0]}`);
+    if (short !== -1 && args[short + 1] !== undefined) {
+      const value = args[short + 1];
+      args.splice(short, 2);
+      return value;
+    }
+    return fallback;
+  }
+  const value = args[index + 1] !== undefined && !String(args[index + 1]).startsWith('--') ? args[index + 1] : true;
+  args.splice(index, value === true ? 1 : 2);
+  return value;
+}
+
+const wantJson = args.includes('--json');
+if (wantJson) args.splice(args.indexOf('--json'), 1);
+
+function color(code, text) {
+  if (!process.stdout.isTTY) return text;
+  return `\u001b[${code}m${text}\u001b[0m`;
+}
+const dim = (text) => color('2', text);
+const bold = (text) => color('1', text);
+const accent = (text) => color('38;5;111', text);
+
+async function ping() {
+  try {
+    const response = await fetch(`${config.BASE_URL}/api/health`, { signal: AbortSignal.timeout(700) });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function ensureServer() {
+  if (await ping()) return true;
+  const child = spawn(process.execPath, [path.join(config.APP_DIR, 'server', 'server.js')], {
+    detached: true,
+    stdio: 'ignore',
+    env: process.env,
+  });
+  child.unref();
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    if (await ping()) return true;
+  }
+  return false;
+}
+
+async function request(method, route, body) {
+  const response = await fetch(`${config.BASE_URL}${route}`, {
+    method,
+    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await response.text();
+  const payload = text ? JSON.parse(text) : null;
+  if (!response.ok) throw new Error(payload?.error || `Request failed (${response.status})`);
+  return payload;
+}
+
+function pct(book) {
+  return book.percent === null ? '—' : `${Math.round(book.percent)}%`;
+}
+
+function bar(value, width = 22) {
+  const filled = Math.round((Math.min(100, Math.max(0, value)) / 100) * width);
+  return '█'.repeat(filled) + '░'.repeat(width - filled);
+}
+
+async function state() {
+  if (!(await ensureServer())) throw new Error('The reading server did not start.');
+  return request('GET', '/api/state');
+}
+
+function printState(data) {
+  const stats = data.stats;
+  const goalLine = `${stats.todayPages}/${data.goal} pages today`;
+  console.log(`${bold('Shelf')}  ${dim(data.today)}  ·  ${goalLine}  ·  streak ${stats.streak}`);
+  console.log('');
+
+  const active = data.books.filter((book) => book.status === 'active');
+  if (!active.length) {
+    console.log(dim('  No book in progress. Add one with: reading add ~/Books/book.pdf'));
+    return;
+  }
+
+  console.log(dim('  READING NOW'));
+  for (const book of active) {
+    const accentLine = accent(bar(book.percent ?? 0));
+    const today = book.todayPages > 0 ? color('32', `+${book.todayPages} today`) : dim('not yet today');
+    console.log(`  ${book.id.toString().padStart(3)}  ${bold(book.title.slice(0, 42))}`);
+    console.log(`       ${accentLine}  ${pct(book).padStart(4)}  ${dim(`p.${book.currentPage}/${book.totalPages} · ${book.remaining} left`)}`);
+    console.log(`       ${today}  ${dim(`${book.pace} p/day${book.etaDate ? ` · finish ${book.etaDate}` : ''}`)}`);
+    if (book.slipping) console.log(`       ${color('33', `slipping · ${book.daysSinceRead ?? '?'} days without a page`)}`);
+    console.log('');
+  }
+
+  const finished = data.books.filter((book) => book.status === 'finished');
+  if (finished.length) {
+    console.log(dim(`  FINISHED (${finished.length}): `) + finished.map((book) => book.title).join(', '));
+  }
+  console.log(dim(`  all time ${stats.allTimePages} pages · best streak ${stats.bestStreak} days`));
+}
+
+function resolveBook(data, needle) {
+  if (!needle) {
+    const focus = data.books.find((book) => book.id === data.stats.focusBookId) || data.books.find((b) => b.status === 'active');
+    if (focus) return focus;
+    throw new Error('No book in progress. Pass a book id.');
+  }
+  if (/^\d+$/.test(needle)) {
+    const book = data.books.find((entry) => entry.id === Number(needle));
+    if (book) return book;
+  }
+  const matches = data.books.filter((book) => book.title.toLowerCase().includes(String(needle).toLowerCase()));
+  if (matches.length === 1) return matches[0];
+  if (matches.length > 1) throw new Error(`"${needle}" matches: ${matches.map((book) => book.title).join(', ')}`);
+  throw new Error(`No book matches "${needle}".`);
+}
+
+async function main() {
+  const portFlag = flag('port');
+  if (portFlag) config.PORT = Number(portFlag), (config.BASE_URL = `http://${config.HOST}:${config.PORT}`);
+
+  switch (command) {
+    case 'open': {
+      if (!(await ensureServer())) throw new Error('The reading server did not start.');
+      const url = config.BASE_URL;
+      console.log(`Shelf: ${url}`);
+      const opener = spawn('xdg-open', [url], { detached: true, stdio: 'ignore' });
+      opener.unref();
+      return;
+    }
+
+    case 'serve': {
+      require('../server/server').start();
+      return;
+    }
+
+    case 'start': {
+      if (await ping()) {
+        console.log(`Already running at ${config.BASE_URL}`);
+        return;
+      }
+      if (!(await ensureServer())) throw new Error('The reading server did not start.');
+      console.log(`Started at ${config.BASE_URL}`);
+      return;
+    }
+
+    case 'stop': {
+      const pidFile = path.join(config.DATA_DIR, 'server.pid');
+      if (!fs.existsSync(pidFile)) {
+        console.log('Shelf is not running (no pid file).');
+        return;
+      }
+      const pid = Number(fs.readFileSync(pidFile, 'utf8').trim());
+      try {
+        process.kill(pid, 'SIGTERM');
+        console.log(`Stopped shelf (pid ${pid}).`);
+      } catch {
+        console.log('Shelf was not running.');
+        fs.unlinkSync(pidFile);
+      }
+      return;
+    }
+
+    case 'url': {
+      console.log(config.BASE_URL);
+      return;
+    }
+
+    case 'state':
+    case 'status':
+    case 'list': {
+      const data = await state();
+      if (wantJson) {
+        console.log(JSON.stringify(data));
+        return;
+      }
+      printState(data);
+      return;
+    }
+
+    case 'add': {
+      const target = args.shift();
+      if (!target) throw new Error('Usage: reading add <path/to/book.pdf> [--title T] [--author A] [--page N]');
+      const body = {
+        path: target,
+        title: flag('title') || undefined,
+        author: flag('author') || undefined,
+        currentPage: Number(flag('page') || 0) || undefined,
+        totalPages: Number(flag('pages') || 0) || undefined,
+      };
+      const data = await request('POST', '/api/books', body);
+      const added = data.books.find((book) => book.id === data.addedBookId);
+      console.log(`Added “${added.title}” — ${added.totalPages} pages${added.coverPath ? '' : ' (no cover found)'}.`);
+      return;
+    }
+
+    case 'inspect': {
+      const target = args.shift();
+      if (!target) throw new Error('Usage: reading inspect <path/to/book.pdf>');
+      const info = await request('POST', '/api/inspect', { path: target });
+      console.log(JSON.stringify(info, null, 2));
+      return;
+    }
+
+    case 'log': {
+      const data = await state();
+      let needle = args.shift();
+      let pages = args.shift();
+      if (pages === undefined && needle !== undefined && /^-?\d+$/.test(needle)) {
+        pages = needle;
+        needle = undefined;
+      }
+      if (pages === undefined) throw new Error('Usage: reading log [book id or title] <pages> [--date YYYY-MM-DD]');
+      const book = resolveBook(data, needle);
+      const date = flag('date') || undefined;
+      const result = await request('POST', `/api/books/${book.id}/log`, { pages: Number(pages), date });
+      const after = result.books.find((entry) => entry.id === book.id);
+      console.log(`${book.title}: +${pages} pages → ${after.currentPage}/${after.totalPages} (${pct(after)})${after.status === 'finished' ? ' — finished!' : ''}`);
+      return;
+    }
+
+    case 'finish':
+    case 'reopen':
+    case 'pause':
+    case 'resume':
+    case 'remove':
+    case 'delete':
+    case 'rm': {
+      const data = await state();
+      const book = resolveBook(data, args.shift());
+      if (command === 'remove' || command === 'delete' || command === 'rm') {
+        await request('DELETE', `/api/books/${book.id}`);
+        console.log(`Removed “${book.title}” from shelf.`);
+        return;
+      }
+      const route = { finish: 'finish', reopen: 'reopen' }[command];
+      if (route) {
+        const result = await request('POST', `/api/books/${book.id}/${route}`);
+        const after = result.books.find((entry) => entry.id === book.id);
+        console.log(`${after.title}: ${after.status}`);
+      } else {
+        const status = command === 'pause' ? 'paused' : 'active';
+        await request('PATCH', `/api/books/${book.id}`, { status });
+        console.log(`${book.title}: ${status}`);
+      }
+      return;
+    }
+
+    case 'help':
+    default: {
+      console.log(`${bold('reading')} — Shelf, from the terminal
+
+  reading                     open the web shelf
+  reading start | stop        start/stop the background server
+  reading serve               run the server in the foreground
+  reading list                print the current shelf
+  reading add <pdf>           add a book (--title, --author, --page, --pages)
+  reading log [book] <pages>  log pages (--date YYYY-MM-DD)
+  reading finish [book]       mark a book finished
+  reading pause [book]        park a book for later
+  reading resume [book]       bring a paused book back
+  reading remove [book]       remove a book from the shelf
+  reading state --json        machine-readable state (used by the bar widget)
+
+Data: ${config.DATA_DIR}`);
+      return;
+    }
+  }
+}
+
+main().catch((error) => {
+  console.error(color('31', `error: ${error.message}`));
+  process.exitCode = 1;
+});

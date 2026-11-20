@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "daniel.readingmanager",
+  "name": "Shelf",
+  "version": "0.1.0",
+  "author": "Daniel Lourenço Jr",
+  "license": "MIT",
+  "description": "Your in-progress books, their covers and a one-click page log in the Omarchy bar.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Shelf",
+    "description": "Progress through the book you are reading, with quick page logging.",
+    "category": "Productivity",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
