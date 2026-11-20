@@ -416,11 +416,11 @@ kbd {
   transition: transform 0.1s ease;
 }
 .heatmap .cell:hover { transform: scale(1.35); outline: 1px solid var(--text-bright); }
-.l0 { background: color-mix(in srgb, var(--text) 7%, transparent); }
-.l1 { background: color-mix(in srgb, var(--green) 38%, transparent); }
-.l2 { background: color-mix(in srgb, var(--green) 62%, transparent); }
-.l3 { background: color-mix(in srgb, var(--green) 84%, transparent); }
-.l4 { background: var(--green); }
+.heatmap .cell.l0, .heatmap-legend .cell.l0 { background: color-mix(in srgb, var(--text) 7%, transparent); }
+.heatmap .cell.l1, .heatmap-legend .cell.l1 { background: color-mix(in srgb, var(--green) 38%, transparent); }
+.heatmap .cell.l2, .heatmap-legend .cell.l2 { background: color-mix(in srgb, var(--green) 62%, transparent); }
+.heatmap .cell.l3, .heatmap-legend .cell.l3 { background: color-mix(in srgb, var(--green) 84%, transparent); }
+.heatmap .cell.l4, .heatmap-legend .cell.l4 { background: var(--green); }
 .heatmap .l0.future { background: transparent; border: 1px solid color-mix(in srgb, var(--text) 6%, transparent); }
 .heatmap-legend { display: flex; align-items: center; gap: 4px; justify-content: flex-end; margin-top: 10px; font-size: 10.5px; color: var(--faint); }
 .heatmap-legend .cell { display: inline-block; }

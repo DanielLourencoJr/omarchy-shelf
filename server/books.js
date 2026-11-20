@@ -118,6 +118,12 @@ function bookStats(book, logs, today) {
     .filter((log) => log.date === today)
     .reduce((sum, log) => sum + Number(log.pages || 0), 0);
 
+  // Pace averages over the book's lifetime until it has a full week of data.
+  // Count calendar days inclusively so a book added today divides by one.
+  const startedDate = localDate(new Date(book.created_at));
+  const startedDaysAgo = Math.max(0, daysBetween(startedDate, today));
+  const paceWindowDays = Math.max(1, Math.min(7, startedDaysAgo + 1));
+
   const readingDates = new Set(bookLogs.filter((log) => Number(log.pages) !== 0).map((log) => log.date));
   const lastReadDate = readingDates.size ? [...readingDates].sort().at(-1) : null;
   const daysSinceRead = lastReadDate ? daysBetween(lastReadDate, today) : null;
@@ -128,8 +134,7 @@ function bookStats(book, logs, today) {
   const previous7 = bookLogs
     .filter((log) => log.date >= addDays(today, -13) && log.date <= addDays(today, -7))
     .reduce((sum, log) => sum + Number(log.pages || 0), 0);
-  const pace = round1(last7 / 7);
-  const previousPace = round1(previous7 / 7);
+  const pace = round1(last7 / paceWindowDays);
 
   const status =
     book.status === 'finished' || (totalPages > 0 && currentPage >= totalPages)
@@ -147,7 +152,6 @@ function bookStats(book, logs, today) {
   if (last7 > previous7 * 1.15 + 1) trend = 'up';
   else if (last7 < previous7 * 0.85 - 1) trend = 'down';
 
-  const startedDaysAgo = daysBetween(book.created_at.slice(0, 10), today);
   const slipping =
     status === 'active' &&
     ((lastReadDate && daysSinceRead >= 3) || (!lastReadDate && startedDaysAgo >= 3));

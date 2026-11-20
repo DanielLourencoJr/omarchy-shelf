@@ -6,6 +6,7 @@
   "panel.streak": "%1-day streak",
   "panel.start": "Start server",
   "panel.open": "Open shelf",
+  "panel.keyboardHelp": "↑/↓ books · ←/→ log amount · Tab shelf controls · Enter select · Esc close",
   "panel.add": "Add book",
   "panel.empty": "Nothing in progress. Add a PDF in the shelf window.",
   "panel.offline": "The shelf server is not running.",

@@ -5,6 +5,7 @@
 const app = {
   data: null,
   theme: null,
+  themeRefreshing: false,
   logBookId: null,
   menuBookId: null,
   editMode: false,
@@ -96,6 +97,22 @@ function applyTheme(theme) {
   set('--magenta', theme.magenta);
   set('--cyan', theme.cyan);
   document.documentElement.style.colorScheme = theme.mode === 'light' ? 'light' : 'dark';
+}
+
+async function refreshTheme() {
+  if (app.themeRefreshing) return;
+  app.themeRefreshing = true;
+  try {
+    const theme = await api('GET', '/api/theme');
+    if (JSON.stringify(theme) !== JSON.stringify(app.theme)) {
+      app.theme = theme;
+      applyTheme(theme);
+    }
+  } catch {
+    // Keep the last successfully applied theme while the local server retries.
+  } finally {
+    app.themeRefreshing = false;
+  }
 }
 
 // ---------------------------------------------------------------- toasts
@@ -863,11 +880,17 @@ function bindEvents() {
 
   // Refresh when the tab regains focus.
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') loadState();
+    if (document.visibilityState === 'visible') {
+      loadState();
+      refreshTheme();
+    }
   });
   app.pollTimer = setInterval(() => {
     if (document.visibilityState === 'visible' && !document.querySelector('dialog[open]')) loadState();
   }, 90000);
+  setInterval(() => {
+    if (document.visibilityState === 'visible') refreshTheme();
+  }, 3000);
 }
 
 function setUploadFile(file) {
@@ -910,12 +933,7 @@ async function logQuick(id, pages) {
 
 async function boot() {
   bindEvents();
-  try {
-    app.theme = await api('GET', '/api/theme');
-    applyTheme(app.theme);
-  } catch {
-    // Keep the built-in Tokyo Night palette.
-  }
+  await refreshTheme();
   await loadState();
 
   if (new URLSearchParams(location.search).has('add') && app.data) {

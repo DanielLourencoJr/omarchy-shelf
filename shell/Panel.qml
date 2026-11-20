@@ -13,7 +13,7 @@ Panel {
 
   moduleName: "daniel.readingmanager"
   ipcTarget: "daniel.readingmanager"
-  manageIpc: true
+  manageIpc: false
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
@@ -33,6 +33,12 @@ Panel {
   property var shelfData: null
   property string offlineMessage: ""
   property bool busy: false
+  property bool cursorActive: false
+  property string focusSection: "books"
+  property int selectedBookIndex: 0
+  property int selectedQuickIndex: 0
+  property int selectedFooterIndex: 0
+  property int selectedOfflineIndex: 0
 
   readonly property var activeBooks: {
     if (!root.shelfData || !root.shelfData.books) return []
@@ -60,6 +66,39 @@ Panel {
     : strings.t("bar.tooltipEmpty")
 
   // ---- data ---------------------------------------------------------------
+
+  function open() {
+    // Build the lazy content before KeyboardPanel observes `open`; otherwise
+    // its built-in focus handoff can run while focusTarget is still null.
+    panel.ensureContent()
+    root.controller.show()
+    root.refresh()
+    Qt.callLater(function() {
+      if (root.opened) root.focusSelectedControl()
+    })
+  }
+
+  function focusSelectedControl() {
+    var catcher = panel.loadedContent
+    if (!catcher) return null
+    // Keep Qt focus on the shared key catcher. Omarchy's panel key routing is
+    // attached there; focusing a descendant button prevents it from seeing
+    // navigation and Escape consistently. focusSelection moves the visible
+    // cursor to the selected action so the user still starts on the first book.
+    catcher.focusSelection()
+    catcher.forceActiveFocus()
+    return catcher
+  }
+
+  function close() {
+    focusRetry.stop()
+    root.controller.hide()
+  }
+
+  function toggle() {
+    if (root.opened) root.close()
+    else root.open()
+  }
 
   function refresh() {
     if (stateCli.running) return
@@ -91,6 +130,102 @@ Panel {
     logCli.exec(["log", String(book.id), String(pages)])
   }
 
+  function selectInitialControl() {
+    root.cursorActive = true
+    root.selectedBookIndex = 0
+    root.selectedQuickIndex = 0
+    root.selectedFooterIndex = 0
+    root.selectedOfflineIndex = 0
+    if (root.offlineMessage !== "" && root.activeBooks.length === 0) root.focusSection = "offline"
+    else if (root.activeBooks.length > 0) root.focusSection = "books"
+    else root.focusSection = "footer"
+  }
+
+  function moveCursor(dx, dy) {
+    if (!root.cursorActive) {
+      root.selectInitialControl()
+      return
+    }
+
+    if (root.focusSection === "books") {
+      if (dy !== 0) {
+        var nextBook = root.selectedBookIndex + dy
+        if (nextBook < 0) {
+          if (root.offlineMessage !== "") root.focusSection = "offline"
+          return
+        }
+        if (nextBook >= root.activeBooks.length) {
+          root.focusSection = "footer"
+          root.selectedFooterIndex = 0
+          return
+        }
+        root.selectedBookIndex = nextBook
+      } else if (dx !== 0) {
+        root.selectedQuickIndex = Math.max(0, Math.min(2, root.selectedQuickIndex + dx))
+      }
+      return
+    }
+
+    if (root.focusSection === "offline") {
+      if (dy > 0 && root.activeBooks.length > 0) root.focusSection = "books"
+      else if (dx !== 0 || dy !== 0) root.selectedOfflineIndex = 1 - root.selectedOfflineIndex
+      return
+    }
+
+    if (root.focusSection === "footer") {
+      if (dy < 0 && root.activeBooks.length > 0) {
+        root.focusSection = "books"
+        root.selectedBookIndex = root.activeBooks.length - 1
+      } else if (dy < 0 && root.offlineMessage !== "") {
+        root.focusSection = "offline"
+      } else if (dx !== 0) {
+        root.selectedFooterIndex = 1 - root.selectedFooterIndex
+      }
+    }
+  }
+
+  function moveSection(direction) {
+    if (direction < 0) {
+      if (root.focusSection === "footer" && root.activeBooks.length > 0) {
+        root.focusSection = "books"
+        root.selectedBookIndex = root.activeBooks.length - 1
+      } else if (root.focusSection === "books" && root.offlineMessage !== "") {
+        root.focusSection = "offline"
+      } else if (root.focusSection === "offline" && root.activeBooks.length > 0) {
+        root.focusSection = "books"
+        root.selectedBookIndex = 0
+      } else {
+        root.focusSection = "footer"
+      }
+    } else if (root.focusSection === "books") {
+      root.focusSection = "footer"
+      root.selectedFooterIndex = 0
+    } else if (root.focusSection === "offline" && root.activeBooks.length > 0) {
+      root.focusSection = "books"
+      root.selectedBookIndex = 0
+    } else if (root.focusSection === "footer" && root.offlineMessage !== "") {
+      root.focusSection = "offline"
+      root.selectedOfflineIndex = 0
+    } else {
+      root.focusSection = root.activeBooks.length > 0 ? "books" : "footer"
+    }
+  }
+
+  function activateCursor() {
+    if (!root.cursorActive) return
+    if (root.focusSection === "books") {
+      if (root.selectedBookIndex < 0 || root.selectedBookIndex >= root.activeBooks.length) return
+      root.logPages(root.activeBooks[root.selectedBookIndex], [1, 5, 10][root.selectedQuickIndex])
+    } else if (root.focusSection === "offline") {
+      if (root.selectedOfflineIndex === 0) root.startServer()
+      else root.openShelf("")
+    } else if (root.selectedFooterIndex === 0) {
+      root.openShelf("?add=1")
+    } else {
+      root.openShelf("")
+    }
+  }
+
   function openShelf(extra) {
     root.close()
     opener.command = ["omarchy", "launch", "browser", root.baseUrl + (extra || "")]
@@ -98,7 +233,30 @@ Panel {
   }
 
   onOpenedChanged: {
-    if (opened) root.refresh()
+    if (opened) {
+      root.selectInitialControl()
+      focusRetry.retries = 0
+      focusRetry.restart()
+      root.refresh()
+      Qt.callLater(root.focusSelectedControl)
+    } else {
+      root.cursorActive = false
+      focusRetry.stop()
+    }
+  }
+
+  onActiveBooksChanged: {
+    if (!root.opened) return
+    if (root.activeBooks.length > 0 && root.focusSection === "footer") {
+      root.focusSection = "books"
+      root.selectedBookIndex = 0
+    } else if (root.activeBooks.length === 0 && root.focusSection === "books") {
+      root.focusSection = root.offlineMessage !== "" ? "offline" : "footer"
+      root.selectedBookIndex = 0
+    } else if (root.selectedBookIndex >= root.activeBooks.length) {
+      root.selectedBookIndex = Math.max(0, root.activeBooks.length - 1)
+    }
+    Qt.callLater(root.focusSelectedControl)
   }
 
   // ---- processes ----------------------------------------------------------
@@ -132,12 +290,41 @@ Panel {
     running: false
   }
 
+  ShellIpc {
+    target: root.ipcTarget
+    function open(): void { root.open() }
+    function close(): void { root.close() }
+    function show(): void { root.open() }
+    function hide(): void { root.close() }
+    function toggle(): void { root.toggle() }
+  }
+
   Timer {
     interval: 90000
     running: true
     repeat: true
     triggeredOnStart: true
     onTriggered: root.refresh()
+  }
+
+  Timer {
+    id: focusRetry
+    property int retries: 0
+    interval: 100
+    repeat: true
+    onTriggered: {
+      // KeyboardPanel temporarily holds compositor-wide Exclusive focus while
+      // the layer surface is being mapped. Wait for its prime to finish before
+      // deciding whether the selected control actually received focus.
+      if (!root.opened || !panel.loadedContent || !panel.focusPrimed) return
+      var target = root.focusSelectedControl()
+      if (target && target.activeFocus) {
+        stop()
+        return
+      }
+      retries++
+      if (retries >= 12) stop()
+    }
   }
 
   // ---- bar button ---------------------------------------------------------
@@ -212,117 +399,193 @@ Panel {
     owner: root
     bar: root.bar
     open: root.opened
+    focusTarget: panel.loadedContent
     contentWidth: panel.fittedContentWidth(Style.space(430))
-    contentHeight: panel.fittedContentHeight(content.implicitHeight, Style.space(620))
+    contentHeight: panel.fittedContentHeight(panel.loadedContentHeight, Style.space(620))
+    onLoadedContentChanged: {
+      if (open && loadedContent) Qt.callLater(function() {
+        if (panel.open) root.focusSelectedControl()
+      })
+    }
+    onFocusPrimedChanged: {
+      if (open && focusPrimed) Qt.callLater(function() {
+        if (panel.open && panel.focusPrimed) root.focusSelectedControl()
+      })
+    }
 
-    ColumnLayout {
-      id: content
-      anchors.top: parent.top
-      anchors.left: parent.left
-      anchors.right: parent.right
-      spacing: Style.space(10)
+    content: PanelKeyCatcher {
+      id: keyCatcher
+      anchors.fill: parent
+      implicitHeight: contentColumn.implicitHeight
+      onMoveRequested: function(dx, dy) {
+        root.moveCursor(dx, dy)
+        Qt.callLater(root.focusSelectedControl)
+      }
+      onTabRequested: function(direction) {
+        root.moveSection(direction)
+        Qt.callLater(root.focusSelectedControl)
+      }
+      onActivateRequested: root.activateCursor()
+      onCloseRequested: root.close()
+      onTextKey: function(text) {
+        if ((text === "a" || text === "A")) root.openShelf("?add=1")
+        else if (text === "o" || text === "O") root.openShelf("")
+        else if (text === "1" || text === "5" || text === "0") {
+          if (root.activeBooks.length === 0) return
+          root.focusSection = "books"
+          root.cursorActive = true
+          root.selectedQuickIndex = text === "1" ? 0 : (text === "5" ? 1 : 2)
+        }
+      }
 
-      RowLayout {
-        Layout.fillWidth: true
-        spacing: Style.space(8)
+      function revealItem(item) {
+        var point = item.mapToItem(contentScroll.contentItem, 0, 0)
+        if (point.y < contentScroll.contentY) contentScroll.contentY = point.y
+        else if (point.y + item.height > contentScroll.contentY + contentScroll.height)
+          contentScroll.contentY = point.y + item.height - contentScroll.height
+      }
 
+      function focusSelection() {
+        var target = null
+        if (root.focusSection === "books") {
+          var row = bookRepeater.itemAt(root.selectedBookIndex)
+          if (row && row.pageButtons) target = row.pageButtons.itemAt(root.selectedQuickIndex)
+        } else if (root.focusSection === "offline") {
+          target = root.selectedOfflineIndex === 0 ? startButton : offlineOpenButton
+        } else {
+          target = root.selectedFooterIndex === 0 ? addButton : openButton
+        }
+        if (target) revealItem(target)
+        return target
+      }
+
+      Flickable {
+        id: contentScroll
+        anchors.fill: parent
+        contentWidth: width
+        contentHeight: contentColumn.implicitHeight
+        clip: true
+        interactive: false
+        boundsBehavior: Flickable.StopAtBounds
+
+        ColumnLayout {
+          id: contentColumn
+          width: contentScroll.width
+          spacing: Style.space(10)
+
+        RowLayout {
+          Layout.fillWidth: true
+          spacing: Style.space(8)
+
+          Text {
+            textFormat: Text.PlainText
+            text: strings.t("panel.title")
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            font.letterSpacing: 0.8
+          }
+
+          Item { Layout.fillWidth: true }
+
+          Text {
+            textFormat: Text.PlainText
+            visible: root.shelfData !== null
+            text: root.shelfData
+              ? strings.t("panel.today").arg(root.shelfData.stats.todayPages).arg(root.shelfData.goal)
+              : ""
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          Text {
+            textFormat: Text.PlainText
+            visible: root.shelfData !== null && root.shelfData.stats.streak > 0
+            text: root.shelfData ? strings.t("panel.streak").arg(root.shelfData.stats.streak) : ""
+            color: root.accent
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+        }
+
+        Rectangle {
+          Layout.fillWidth: true
+          implicitHeight: 1
+          color: Util.alpha(root.foreground, 0.1)
+        }
+
+      // Offline / error state
+        ColumnLayout {
+          Layout.fillWidth: true
+          visible: root.offlineMessage !== ""
+          spacing: Style.space(8)
+
+          Text {
+            Layout.fillWidth: true
+            textFormat: Text.PlainText
+            text: root.offlineMessage
+            wrapMode: Text.Wrap
+            color: Commons.Color.urgent
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          RowLayout {
+            spacing: Style.space(8)
+            Button {
+              id: startButton
+              text: strings.t("panel.start")
+              selected: true
+              hasCursor: root.cursorActive && root.focusSection === "offline" && root.selectedOfflineIndex === 0
+              onHasCursorChanged: if (hasCursor) keyCatcher.revealItem(this)
+              enabled: !root.busy
+              onClicked: root.startServer()
+            }
+            Button {
+              id: offlineOpenButton
+              text: strings.t("panel.open")
+              bordered: true
+              hasCursor: root.cursorActive && root.focusSection === "offline" && root.selectedOfflineIndex === 1
+              onHasCursorChanged: if (hasCursor) keyCatcher.revealItem(this)
+              onClicked: root.openShelf("")
+            }
+          }
+        }
+
+      // Empty shelf
         Text {
+          Layout.fillWidth: true
+          visible: root.shelfData !== null && root.activeBooks.length === 0
           textFormat: Text.PlainText
-          text: strings.t("panel.title")
+          text: strings.t("panel.empty")
+          wrapMode: Text.Wrap
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
-          font.letterSpacing: 0.8
         }
-
-        Item { Layout.fillWidth: true }
-
-        Text {
-          textFormat: Text.PlainText
-          visible: root.shelfData !== null
-          text: root.shelfData
-            ? strings.t("panel.today").arg(root.shelfData.stats.todayPages).arg(root.shelfData.goal)
-            : ""
-          color: root.foreground
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-        }
-
-        Text {
-          textFormat: Text.PlainText
-          visible: root.shelfData !== null && root.shelfData.stats.streak > 0
-          text: root.shelfData ? strings.t("panel.streak").arg(root.shelfData.stats.streak) : ""
-          color: root.accent
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-        }
-      }
-
-      Rectangle {
-        Layout.fillWidth: true
-        implicitHeight: 1
-        color: Util.alpha(root.foreground, 0.1)
-      }
-
-      // Offline / error state
-      ColumnLayout {
-        Layout.fillWidth: true
-        visible: root.offlineMessage !== ""
-        spacing: Style.space(8)
-
-        Text {
-          Layout.fillWidth: true
-          textFormat: Text.PlainText
-          text: root.offlineMessage
-          wrapMode: Text.Wrap
-          color: Commons.Color.urgent
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-        }
-
-        RowLayout {
-          spacing: Style.space(8)
-          Button {
-            text: strings.t("panel.start")
-            selected: true
-            enabled: !root.busy
-            onClicked: root.startServer()
-          }
-          Button {
-            text: strings.t("panel.open")
-            bordered: true
-            onClicked: root.openShelf("")
-          }
-        }
-      }
-
-      // Empty shelf
-      Text {
-        Layout.fillWidth: true
-        visible: root.shelfData !== null && root.activeBooks.length === 0
-        textFormat: Text.PlainText
-        text: strings.t("panel.empty")
-        wrapMode: Text.Wrap
-        color: root.dim
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
-      }
 
       // Books
       Repeater {
+        id: bookRepeater
         model: root.activeBooks
 
         delegate: Rectangle {
           id: bookRow
+          property alias pageButtons: pageButtons
           required property var modelData
+          required property int index
 
           readonly property var book: modelData
           readonly property real ratio: book.percent ? Math.max(0, Math.min(1, book.percent / 100)) : 0
+          readonly property bool keyboardSelected: root.cursorActive && root.focusSection === "books" && root.selectedBookIndex === index
 
           Layout.fillWidth: true
           implicitHeight: Style.space(74)
           radius: Style.cornerRadius
-          color: Util.alpha(root.foreground, 0.035)
+          color: keyboardSelected ? Util.alpha(root.accent, 0.12) : Util.alpha(root.foreground, 0.035)
+          border.width: keyboardSelected ? 1 : 0
+          border.color: root.accent
 
           RowLayout {
             anchors.fill: parent
@@ -428,14 +691,25 @@ Panel {
               RowLayout {
                 spacing: Style.space(4)
                 Repeater {
+                  id: pageButtons
                   model: [1, 5, 10]
                   delegate: Button {
                     required property var modelData
+                    required property int index
                     text: "+" + modelData
                     fontSize: Style.font.caption
                     bordered: true
+                    hasCursor: root.cursorActive && root.focusSection === "books" && root.selectedBookIndex === bookRow.index && root.selectedQuickIndex === index
+                    onHasCursorChanged: if (hasCursor) keyCatcher.revealItem(this)
                     enabled: !root.busy
-                    onClicked: root.logPages(bookRow.book, modelData)
+                    onClicked: {
+                      root.cursorActive = true
+                      root.focusSection = "books"
+                      root.selectedBookIndex = bookRow.index
+                      root.selectedQuickIndex = index
+                      Qt.callLater(root.focusSelectedControl)
+                      root.logPages(bookRow.book, modelData)
+                    }
                   }
                 }
               }
@@ -453,28 +727,46 @@ Panel {
         }
       }
 
-      Rectangle {
-        Layout.fillWidth: true
-        implicitHeight: 1
-        color: Util.alpha(root.foreground, 0.1)
-      }
-
-      RowLayout {
-        Layout.fillWidth: true
-        spacing: Style.space(8)
-
-        Button {
-          text: strings.t("panel.add")
-          bordered: true
-          onClicked: root.openShelf("?add=1")
+        Rectangle {
+          Layout.fillWidth: true
+          implicitHeight: 1
+          color: Util.alpha(root.foreground, 0.1)
         }
 
-        Item { Layout.fillWidth: true }
+        Text {
+          Layout.fillWidth: true
+          textFormat: Text.PlainText
+          text: strings.t("panel.keyboardHelp")
+          color: root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          horizontalAlignment: Text.AlignHCenter
+        }
 
-        Button {
-          text: strings.t("panel.open")
-          selected: true
-          onClicked: root.openShelf("")
+        RowLayout {
+          Layout.fillWidth: true
+          spacing: Style.space(8)
+
+          Button {
+            id: addButton
+            text: strings.t("panel.add")
+            bordered: true
+          hasCursor: root.cursorActive && root.focusSection === "footer" && root.selectedFooterIndex === 0
+            onHasCursorChanged: if (hasCursor) keyCatcher.revealItem(this)
+            onClicked: root.openShelf("?add=1")
+          }
+
+          Item { Layout.fillWidth: true }
+
+          Button {
+            id: openButton
+            text: strings.t("panel.open")
+            selected: true
+            hasCursor: root.cursorActive && root.focusSection === "footer" && root.selectedFooterIndex === 1
+            onHasCursorChanged: if (hasCursor) keyCatcher.revealItem(this)
+            onClicked: root.openShelf("")
+          }
+        }
         }
       }
     }
